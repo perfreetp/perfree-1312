@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus, ClipboardList, CheckCheck, CircleCheck, User, Calendar, Clock,
-  AlertTriangle, X, ChevronRight, AlertCircle, ListChecks, Paperclip
+  AlertTriangle, X, ChevronRight, AlertCircle, ListChecks, Paperclip,
+  ChevronLeft, BarChart2
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { RectStatusBadge } from '@/components/common/Badges';
@@ -11,14 +13,32 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { RectificationStatus } from '@/types';
 
 export default function Rectification() {
+  const navigate = useNavigate();
   const rectifications = useAppStore(s => s.rectifications);
   const workOrders = useAppStore(s => s.workOrders);
   const addRectification = useAppStore(s => s.addRectification);
   const completeRectification = useAppStore(s => s.completeRectification);
   const reviewRectification = useAppStore(s => s.reviewRectification);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const openId = searchParams.get('open');
+    if (openId) {
+      if (openId.startsWith('RE')) {
+        setSelectedId(openId);
+      } else if (openId.startsWith('WO')) {
+        const relatedRects = rectifications
+          .filter(r => r.workOrderId === openId)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        if (relatedRects.length > 0) {
+          setSelectedId(relatedRects[0].id);
+        }
+      }
+    }
+  }, [searchParams, rectifications]);
 
   const [form, setForm] = useState({
     workOrderId: '',
@@ -170,9 +190,28 @@ export default function Rectification() {
               onClick={e => e.stopPropagation()}
             >
               <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between bg-gradient-to-r from-[#1B3A5C] to-[#2A5580]">
-                <div>
-                  <div className="text-xs text-white/70">整改任务</div>
-                  <div className="text-white font-semibold">{selected.title}</div>
+                <div className="flex items-center gap-3">
+                  {searchParams.get('returnTo') === 'analysis' && (
+                    <button
+                      onClick={() => {
+                        const month = searchParams.get('month') || '';
+                        const channel = searchParams.get('channel') || '';
+                        const station = searchParams.get('station') || '';
+                        const dept = searchParams.get('dept') || '';
+                        navigate(`/analysis?open=${selected.id}&returnTo=analysis&month=${month}&channel=${channel}&station=${station}&dept=${dept}`);
+                        setSelectedId(null);
+                      }}
+                      className="flex items-center gap-1 text-xs text-white/90 hover:text-white bg-white/10 px-2.5 py-1.5 rounded-md hover:bg-white/20 transition-colors"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <BarChart2 className="w-3.5 h-3.5 mr-0.5" />
+                      返回报告
+                    </button>
+                  )}
+                  <div>
+                    <div className="text-xs text-white/70">整改任务</div>
+                    <div className="text-white font-semibold">{selected.title}</div>
+                  </div>
                 </div>
                 <button onClick={() => setSelectedId(null)} className="text-white/70 hover:text-white">
                   <X className="w-5 h-5" />

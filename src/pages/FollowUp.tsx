@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlertCircle, Phone, CheckCircle2, Users, AlertTriangle, ChevronDown, ChevronRight, FileText, Building2, Paperclip } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { departments, stations } from '@/data/mockBase';
@@ -11,8 +12,31 @@ export default function FollowUp() {
   const workOrders = useAppStore(s => s.workOrders);
   const followUps = useAppStore(s => s.followUps);
   const completeFollowUp = useAppStore(s => s.completeFollowUp);
+  const [searchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<'pending' | 'done'>('pending');
+
+  useEffect(() => {
+    const openId = searchParams.get('open');
+    if (openId) {
+      if (openId.startsWith('FU')) {
+        setSelectedId(openId);
+        const fu = followUps.find(f => f.id === openId);
+        if (fu) {
+          setTab(fu.status);
+        }
+      } else if (openId.startsWith('WO')) {
+        const relatedFUs = followUps
+          .filter(f => f.workOrderId === openId)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        if (relatedFUs.length > 0) {
+          const latestFu = relatedFUs[0];
+          setSelectedId(latestFu.id);
+          setTab(latestFu.status);
+        }
+      }
+    }
+  }, [searchParams, followUps]);
 
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');

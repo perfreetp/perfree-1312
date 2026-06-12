@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   User, Building2, FileText, Paperclip, Send, X, ChevronDown,
   MessageSquare, Clock, AlertCircle, UserCheck, Upload
@@ -18,8 +19,20 @@ export default function Processing() {
   const addAttachment = useAppStore(s => s.addAttachment);
   const removeAttachment = useAppStore(s => s.removeAttachment);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('open'));
   const [tab, setTab] = useState<'pending' | 'processing'>('pending');
+
+  useEffect(() => {
+    const openId = searchParams.get('open');
+    if (openId) {
+      setSelectedId(openId);
+      const order = workOrders.find(w => w.id === openId);
+      if (order) {
+        setTab(order.status === 'pending' ? 'pending' : 'processing');
+      }
+    }
+  }, [searchParams, workOrders]);
 
   const [deptId, setDeptId] = useState('');
   const [assignee, setAssignee] = useState('');

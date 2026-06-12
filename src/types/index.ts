@@ -71,6 +71,7 @@ export interface FollowUp {
   relatedOrderIds: string[];
   responsibleDepartmentId?: string;
   followUpAt?: string;
+  createdAt: string;
   status: 'pending' | 'done';
 }
 
@@ -86,6 +87,7 @@ export interface Rectification {
   deadline: string;
   completedAt?: string;
   closedAt?: string;
+  createdAt: string;
   timeline: { time: string; event: string; }[];
 }
 

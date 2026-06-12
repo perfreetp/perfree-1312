@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FilePlus, Clock, AlertTriangle, CheckCircle,
   Phone, Globe, Smartphone, Building2, ClipboardCheck,
-  TrendingUp, TrendingDown, ArrowRight, ThumbsDown, Users
+  TrendingUp, TrendingDown, ArrowRight, ThumbsDown, Users,
+  ChevronDown, ChevronRight
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, Area } from 'recharts';
 import { useAppStore, useWorkOrderStats } from '@/stores/appStore';
@@ -19,6 +21,7 @@ export default function Overview() {
   const workOrders = useAppStore(s => s.workOrders);
   const followUps = useAppStore(s => s.followUps);
   const rectifications = useAppStore(s => s.rectifications);
+  const [expandedComplaintKey, setExpandedComplaintKey] = useState<string | null>(null);
   const now = Date.now();
 
   const statusDist = [
@@ -64,17 +67,61 @@ export default function Overview() {
 
   const repeatComplaints = (() => {
     const repeatFollowUps = followUps.filter(f => f.isRepeatComplaint);
-    const grouped: Record<string, { name: string; count: number }> = {};
+    const grouped: Record<string, {
+      key: string;
+      passengerName: string;
+      passengerPhone: string;
+      count: number;
+      workOrders: typeof workOrders;
+      followUps: typeof followUps;
+      latestFollowUp: typeof followUps[0] | null;
+    }> = {};
     repeatFollowUps.forEach(f => {
       const wo = workOrders.find(w => w.id === f.workOrderId);
       if (wo) {
-        if (!grouped[wo.passengerName]) {
-          grouped[wo.passengerName] = { name: wo.passengerName, count: 0 };
+        const key = `${wo.passengerName}|${wo.passengerPhone}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            key,
+            passengerName: wo.passengerName,
+            passengerPhone: wo.passengerPhone,
+            count: 0,
+            workOrders: [],
+            followUps: [],
+            latestFollowUp: null,
+          };
         }
-        grouped[wo.passengerName].count++;
+        grouped[key].count++;
+        grouped[key].followUps.push(f);
+        if (!grouped[key].workOrders.some(o => o.id === wo.id)) {
+          grouped[key].workOrders.push(wo);
+        }
+        const relatedFUs = followUps.filter(fu => fu.workOrderId === wo.id);
+        relatedFUs.forEach(fu => {
+          if (!grouped[key].followUps.some(item => item.id === fu.id)) {
+            grouped[key].followUps.push(fu);
+          }
+        });
       }
     });
-    return Object.values(grouped);
+    return Object.values(grouped).map(g => {
+      const sortedFUs = [...g.followUps].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const allOrders = g.workOrders;
+      workOrders.forEach(wo => {
+        if (wo.passengerName === g.passengerName && wo.passengerPhone === g.passengerPhone) {
+          if (!allOrders.some(o => o.id === wo.id)) {
+            allOrders.push(wo);
+          }
+        }
+      });
+      const sortedOrders = [...allOrders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return {
+        ...g,
+        workOrders: sortedOrders,
+        followUps: sortedFUs,
+        latestFollowUp: sortedFUs[0] || null,
+      };
+    });
   })();
 
   const stationHighFreq = (() => {
@@ -272,7 +319,7 @@ export default function Overview() {
                 <div
                   key={order.id}
                   className={`px-5 py-3.5 flex items-start gap-3 hover:bg-[#F7FAFC] transition-colors cursor-pointer ${isOverdue ? 'border-l-4 border-[#DC2626] bg-[#FEF2F2]/50' : 'border-l-4 border-[#E8A838] bg-[#FFFBEB]/30'}`}
-                  onClick={() => navigate('/processing')}
+                  onClick={() => navigate(`/processing?open=${order.id}`)}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -312,7 +359,11 @@ export default function Overview() {
               {overdueOrders.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {overdueOrders.slice(0, 3).map(o => (
-                    <div key={o.id} className="text-xs text-[#64748B] hover:text-[#DC2626] truncate">{o.id}</div>
+                    <div
+                      key={o.id}
+                      className="text-xs text-[#64748B] hover:text-[#DC2626] truncate"
+                      onClick={e => { e.stopPropagation(); navigate(`/processing?open=${o.id}`); }}
+                    >{o.id}</div>
                   ))}
                 </div>
               )}
@@ -327,7 +378,11 @@ export default function Overview() {
               {lowScoreFollowUps.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {lowScoreFollowUps.slice(0, 3).map(f => (
-                    <div key={f.id} className="text-xs text-[#64748B] hover:text-[#F97316] truncate">{f.workOrderId}</div>
+                    <div
+                      key={f.id}
+                      className="text-xs text-[#64748B] hover:text-[#F97316] truncate"
+                      onClick={e => { e.stopPropagation(); navigate(`/followup?open=${f.id}`); }}
+                    >{f.workOrderId}</div>
                   ))}
                 </div>
               )}
@@ -340,9 +395,61 @@ export default function Overview() {
               </div>
               <div className="text-2xl font-bold text-[#7C3AED]">{repeatComplaints.length}</div>
               {repeatComplaints.length > 0 && (
-                <div className="mt-2 space-y-1">
+                <div className="mt-2 space-y-2">
                   {repeatComplaints.slice(0, 3).map(r => (
-                    <div key={r.name} className="text-xs text-[#64748B] hover:text-[#7C3AED] truncate">{r.name} ({r.count}次)</div>
+                    <div key={r.key} className="text-xs">
+                      <div
+                        className="flex items-center justify-between text-[#64748B] hover:text-[#7C3AED] cursor-pointer"
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (expandedComplaintKey === r.key) {
+                            setExpandedComplaintKey(null);
+                          } else {
+                            setExpandedComplaintKey(r.key);
+                            if (r.latestFollowUp) {
+                              navigate(`/followup?open=${r.latestFollowUp.id}`);
+                            }
+                          }
+                        }}
+                      >
+                        <span className="truncate flex-1">
+                          {r.passengerName} · {r.passengerPhone} ({r.count}次)
+                        </span>
+                        {expandedComplaintKey === r.key ? (
+                          <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 ml-1" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 ml-1" />
+                        )}
+                      </div>
+                      {expandedComplaintKey === r.key && (
+                        <div className="mt-2 ml-2 pl-3 border-l-2 border-[#E9D5FF] space-y-2">
+                          {[...r.workOrders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(wo => {
+                            const fu = r.followUps.find(f => f.workOrderId === wo.id);
+                            return (
+                              <div
+                                key={wo.id}
+                                className="text-xs text-[#64748B] hover:text-[#7C3AED] cursor-pointer py-1"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  navigate(`/processing?open=${wo.id}`);
+                                }}
+                              >
+                                <div className="font-mono text-[#7C3AED]">{wo.id}</div>
+                                <div className="mt-0.5">
+                                  {new Date(wo.createdAt).toLocaleDateString('zh-CN')} · {wo.categoryName}
+                                </div>
+                                <div className="mt-0.5 flex items-center gap-2">
+                                  <StatusBadge status={wo.status} />
+                                  {fu && fu.satisfaction !== undefined && (
+                                    <span className="text-[#E8A838]">★ {fu.satisfaction}</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -357,7 +464,11 @@ export default function Overview() {
               {stationHighFreq.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {stationHighFreq.slice(0, 3).map(s => (
-                    <div key={s.stationId} className="text-xs text-[#64748B] hover:text-[#2563EB] truncate">{s.stationName} ({s.count}件)</div>
+                    <div
+                      key={s.stationId}
+                      className="text-xs text-[#64748B] hover:text-[#2563EB] truncate"
+                      onClick={e => { e.stopPropagation(); navigate(`/analysis?station=${s.stationId}`); }}
+                    >{s.stationName} ({s.count}件)</div>
                   ))}
                 </div>
               )}
@@ -389,7 +500,7 @@ export default function Overview() {
               </thead>
               <tbody>
                 {recentOrders.map(o => (
-                  <tr key={o.id} className="hover:bg-[#F7FAFC] cursor-pointer" onClick={() => navigate('/processing')}>
+                  <tr key={o.id} className="hover:bg-[#F7FAFC] cursor-pointer" onClick={() => navigate(`/processing?open=${o.id}`)}>
                     <td className="table-cell font-mono text-xs text-[#64748B]">{o.id}</td>
                     <td className="table-cell max-w-[240px] truncate">{o.title}</td>
                     <td className="table-cell"><UrgencyBadge urgency={o.urgency} /></td>

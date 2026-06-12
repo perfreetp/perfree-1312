@@ -43,7 +43,7 @@ interface AppState extends PersistedState {
   updateFollowUp: (id: string, updates: Partial<FollowUp>) => void;
   completeFollowUp: (id: string, satisfaction: number, comment: string, triggerRectification: boolean, departmentId?: string) => void;
 
-  addRectification: (r: Omit<Rectification, 'id' | 'timeline'>) => void;
+  addRectification: (r: Omit<Rectification, 'id' | 'timeline' | 'createdAt'>) => void;
   updateRectification: (id: string, updates: Partial<Rectification>) => void;
   completeRectification: (id: string) => void;
   reviewRectification: (id: string, passed: boolean) => void;
@@ -123,6 +123,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       isRepeatComplaint: false,
       relatedOrderIds: [],
       status: 'pending',
+      createdAt: new Date().toISOString(),
     };
     const hasFollowUp = state.followUps.some(f => f.workOrderId === id);
     const next = {
@@ -238,6 +239,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         departmentName: dept.name,
         status: 'rectifying' as const,
         deadline: new Date(Date.now() + 5 * 86400 * 1000).toISOString(),
+        createdAt: new Date().toISOString(),
         timeline: [
           { time: new Date().toISOString(), event: `整改任务创建（旅客回访不满意触发，责任部门：${dept.name}）` },
         ],
@@ -277,6 +279,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       rectifications: [{
         ...r,
         id: generateId('RT'),
+        createdAt: new Date().toISOString(),
         timeline: [{ time: new Date().toISOString(), event: '整改任务创建' }],
       } as Rectification, ...state.rectifications],
     };

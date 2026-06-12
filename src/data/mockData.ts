@@ -220,6 +220,7 @@ export const initialFollowUps: FollowUp[] = [
     isRepeatComplaint: false,
     relatedOrderIds: [],
     status: 'pending',
+    createdAt: daysAgo(0),
   },
   {
     id: 'FU002',
@@ -227,6 +228,7 @@ export const initialFollowUps: FollowUp[] = [
     isRepeatComplaint: true,
     relatedOrderIds: ['WO20260520008'],
     status: 'pending',
+    createdAt: daysAgo(0),
   },
 ];
 
@@ -241,6 +243,7 @@ export const initialRectifications: Rectification[] = [
     departmentName: '车辆段',
     status: 'rectifying',
     deadline: daysAgo(-5),
+    createdAt: daysAgo(0),
     timeline: [
       { time: daysAgo(0), event: '整改任务创建' },
       { time: daysAgo(0), event: '责任人王段长确认接收' },
@@ -256,6 +259,7 @@ export const initialRectifications: Rectification[] = [
     departmentName: '车站服务中心',
     status: 'reviewing',
     deadline: daysAgo(-3),
+    createdAt: hours(-20),
     completedAt: hours(-1),
     timeline: [
       { time: hours(-20), event: '整改任务创建' },
@@ -273,6 +277,7 @@ export const initialRectifications: Rectification[] = [
     departmentName: '车站服务中心',
     status: 'closed',
     deadline: daysAgo(-7),
+    createdAt: daysAgo(3),
     completedAt: daysAgo(-1),
     closedAt: hours(-3),
     timeline: [
