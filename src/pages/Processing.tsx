@@ -1,18 +1,23 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   User, Building2, FileText, Paperclip, Send, X, ChevronDown,
-  MessageSquare, Clock, AlertCircle, UserCheck
+  MessageSquare, Clock, AlertCircle, UserCheck, Upload
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { categories, departments, replyTemplates, stations } from '@/data/mockBase';
 import { StatusBadge, UrgencyBadge, ChannelBadge } from '@/components/common/Badges';
 import CountdownTimer from '@/components/common/CountdownTimer';
+import AttachmentList from '@/components/common/AttachmentList';
+import type { Attachment } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Processing() {
   const workOrders = useAppStore(s => s.workOrders);
   const assignWorkOrder = useAppStore(s => s.assignWorkOrder);
   const processWorkOrder = useAppStore(s => s.processWorkOrder);
+  const addAttachment = useAppStore(s => s.addAttachment);
+  const removeAttachment = useAppStore(s => s.removeAttachment);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<'pending' | 'processing'>('pending');
 
@@ -42,6 +47,30 @@ export default function Processing() {
     processWorkOrder(selectedId, replyContent);
     setReplyContent('');
     setSelectedId(null);
+  }
+
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!selectedId) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const att: Attachment = {
+          id: `att${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          dataUrl: reader.result as string,
+          uploadedAt: new Date().toISOString(),
+        };
+        addAttachment(selectedId, att);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   function useTemplate(tpl: string) {
@@ -200,6 +229,33 @@ export default function Processing() {
                   </div>
                 </div>
 
+                <div>
+                  <div className="text-xs text-[#64748B] mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" />工单附件</span>
+                    {selected.status === 'processing' && (
+                      <>
+                        <button
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex items-center gap-1 text-[#1B3A5C] hover:underline"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> 上传附件
+                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={handleFileUpload}
+                        />
+                      </>
+                    )}
+                  </div>
+                  <AttachmentList
+                    attachments={selected.attachments}
+                    onRemove={selected.status === 'processing' ? (id) => removeAttachment(selected.id, id) : undefined}
+                  />
+                </div>
+
                 {selected.status === 'processing' && (
                   <div className="pt-3 border-t border-[#E2E8F0]">
                     <div className="text-xs text-[#64748B] mb-2 flex items-center justify-between">
@@ -228,10 +284,7 @@ export default function Processing() {
                       onChange={e => setReplyContent(e.target.value)}
                       placeholder="请输入答复旅客的内容..."
                     />
-                    <div className="flex items-center justify-between mt-3">
-                      <button className="flex items-center gap-1 text-xs text-[#64748B] hover:text-[#1B3A5C]">
-                        <Paperclip className="w-4 h-4" /> 添加附件
-                      </button>
+                    <div className="flex items-center justify-end mt-3">
                       <button className="btn-primary text-sm py-1.5" onClick={handleProcess}>
                         <Send className="w-4 h-4" /> 提交处理并进入回访
                       </button>

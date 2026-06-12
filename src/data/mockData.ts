@@ -28,7 +28,17 @@ export const initialWorkOrders: WorkOrder[] = [
     logs: [
       { id: 'l1', action: '工单创建', operator: '系统', detail: '通过12306热线受理', createdAt: daysAgo(0) },
       { id: 'l2', action: '分派处理', operator: '王主管', detail: '分派至车辆段李工程师处理', createdAt: daysAgo(0) },
-    ]
+    ],
+    attachments: [
+      {
+        id: 'att1',
+        fileName: '车厢空调故障现场照片.jpg',
+        fileSize: 823456,
+        fileType: 'image/jpeg',
+        dataUrl: '',
+        uploadedAt: daysAgo(0),
+      }
+    ],
   },
   {
     id: 'WO20260612002',
@@ -46,7 +56,8 @@ export const initialWorkOrders: WorkOrder[] = [
     updatedAt: hours(-1),
     logs: [
       { id: 'l3', action: '工单创建', operator: '系统', detail: '通过官网在线咨询受理', createdAt: hours(-1) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612003',
@@ -71,7 +82,8 @@ export const initialWorkOrders: WorkOrder[] = [
       { id: 'l4', action: '工单创建', operator: '系统', detail: '通过手机APP提交', createdAt: daysAgo(1) },
       { id: 'l5', action: '分派处理', operator: '孙主管', detail: '分派至车站服务中心', createdAt: daysAgo(1) },
       { id: 'l6', action: '处理完成', operator: '赵维修', detail: '损坏座椅已更换完毕', createdAt: daysAgo(0) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612004',
@@ -98,7 +110,8 @@ export const initialWorkOrders: WorkOrder[] = [
       { id: 'l8', action: '分派处理', operator: '调度室', detail: '转运输部核实', createdAt: daysAgo(2) },
       { id: 'l9', action: '回复旅客', operator: '陈调度', detail: '已电话回复旅客晚点原因', createdAt: daysAgo(2) },
       { id: 'l10', action: '回访完成', operator: '客服小张', detail: '旅客表示满意，工单关闭', createdAt: daysAgo(2) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612005',
@@ -121,7 +134,8 @@ export const initialWorkOrders: WorkOrder[] = [
     logs: [
       { id: 'l11', action: '工单创建', operator: '系统', detail: '通过车站投诉箱受理', createdAt: hours(-3) },
       { id: 'l12', action: '分派处理', operator: '车站值班室', detail: '分派保洁部门处理', createdAt: hours(-2) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612006',
@@ -140,7 +154,8 @@ export const initialWorkOrders: WorkOrder[] = [
     updatedAt: daysAgo(1),
     logs: [
       { id: 'l13', action: '工单创建', operator: '系统', detail: '通过官网投诉通道提交', createdAt: daysAgo(1) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612007',
@@ -167,7 +182,8 @@ export const initialWorkOrders: WorkOrder[] = [
       { id: 'l14', action: '工单创建', operator: '系统', detail: '通过12306重点旅客预约', createdAt: daysAgo(3) },
       { id: 'l15', action: '分派处理', operator: '服务台', detail: '安排专人对接', createdAt: daysAgo(3) },
       { id: 'l16', action: '回访完成', operator: '客服小李', detail: '旅客非常满意，工单关闭', createdAt: daysAgo(3) },
-    ]
+    ],
+    attachments: []
   },
   {
     id: 'WO20260612008',
@@ -192,7 +208,8 @@ export const initialWorkOrders: WorkOrder[] = [
       { id: 'l17', action: '工单创建', operator: '系统', detail: '通过官网咨询', createdAt: daysAgo(1) },
       { id: 'l18', action: '回复完成', operator: '票务客服', detail: '已发送详细说明到旅客邮箱', createdAt: daysAgo(1) },
       { id: 'l19', action: '回访完成', operator: '客服', detail: '问题已解决，旅客满意', createdAt: daysAgo(1) },
-    ]
+    ],
+    attachments: []
   },
 ];
 
@@ -227,7 +244,7 @@ export const initialRectifications: Rectification[] = [
     timeline: [
       { time: daysAgo(0), event: '整改任务创建' },
       { time: daysAgo(0), event: '责任人王段长确认接收' },
-    ]
+    ],
   },
   {
     id: 'RT002',
@@ -244,7 +261,7 @@ export const initialRectifications: Rectification[] = [
       { time: hours(-20), event: '整改任务创建' },
       { time: hours(-18), event: '保洁部门接收任务' },
       { time: hours(-1), event: '整改措施已落实，申请复核' },
-    ]
+    ],
   },
   {
     id: 'RT003',
@@ -263,6 +280,6 @@ export const initialRectifications: Rectification[] = [
       { time: daysAgo(3), event: '责任人确认接收' },
       { time: daysAgo(-1), event: '整改措施落实' },
       { time: hours(-3), event: '复核通过，任务关闭' },
-    ]
+    ],
   },
 ];

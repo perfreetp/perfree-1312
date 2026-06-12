@@ -20,6 +20,15 @@ export interface Station {
   name: string;
 }
 
+export interface Attachment {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  dataUrl: string;
+  uploadedAt: string;
+}
+
 export interface ProcessLog {
   id: string;
   action: string;
@@ -50,6 +59,7 @@ export interface WorkOrder {
   closedAt?: string;
   reply?: string;
   logs: ProcessLog[];
+  attachments: Attachment[];
 }
 
 export interface FollowUp {

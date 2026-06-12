@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { AlertCircle, Phone, CheckCircle2, Users, AlertTriangle, ChevronDown, ChevronRight, FileText, Building2 } from 'lucide-react';
+import { AlertCircle, Phone, CheckCircle2, Users, AlertTriangle, ChevronDown, ChevronRight, FileText, Building2, Paperclip } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { departments, stations } from '@/data/mockBase';
 import { UrgencyBadge, ChannelBadge, StatusBadge } from '@/components/common/Badges';
 import StarRating from '@/components/common/StarRating';
+import AttachmentList from '@/components/common/AttachmentList';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function FollowUp() {
@@ -35,7 +36,7 @@ export default function FollowUp() {
     if (!selectedId || !rating) { alert('请选择满意度评分'); return; }
     const trigger = rating < 3;
     if (trigger && !deptId) { alert('不满意请确认责任部门以触发整改'); return; }
-    completeFollowUp(selectedId, rating, comment, trigger);
+    completeFollowUp(selectedId, rating, comment, trigger, trigger ? deptId : undefined);
     setRating(0);
     setComment('');
     setDeptId('');
@@ -200,6 +201,11 @@ export default function FollowUp() {
                 <div className="p-3 bg-[#FEF3C7] rounded-lg text-sm text-[#92400E] border border-[#FDE68A] whitespace-pre-wrap">
                   {selectedOrder.reply || '暂无'}
                 </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-[#64748B] mb-1.5 flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" />工单附件</div>
+                <AttachmentList attachments={selectedOrder.attachments} />
               </div>
 
               {selected.status === 'pending' ? (

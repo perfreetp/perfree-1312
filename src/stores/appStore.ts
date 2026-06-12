@@ -1,21 +1,47 @@
 import { create } from 'zustand';
-import type { WorkOrder, FollowUp, Rectification, WorkOrderStatus, Urgency, Channel } from '@/types';
+import type { WorkOrder, FollowUp, Rectification, WorkOrderStatus, Urgency, Channel, Attachment } from '@/types';
 import { initialWorkOrders, initialFollowUps, initialRectifications } from '@/data/mockData';
-import { categories, departments } from '@/data/mockBase';
+import { departments } from '@/data/mockBase';
 
-interface AppState {
+const STORAGE_KEY = 'railway-qms-store-v1';
+
+interface PersistedState {
   workOrders: WorkOrder[];
   followUps: FollowUp[];
   rectifications: Rectification[];
+}
 
-  addWorkOrder: (order: Omit<WorkOrder, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'logs'> & Partial<WorkOrder>) => void;
+function loadFromStorage(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedState;
+  } catch {
+    return null;
+  }
+}
+
+function saveToStorage(state: PersistedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+const persisted = loadFromStorage();
+
+interface AppState extends PersistedState {
+  addWorkOrder: (order: Omit<WorkOrder, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'logs' | 'attachments'> & Partial<WorkOrder>) => void;
   updateWorkOrder: (id: string, updates: Partial<WorkOrder>) => void;
   assignWorkOrder: (id: string, departmentId: string, assignee: string) => void;
   processWorkOrder: (id: string, reply: string) => void;
   closeWorkOrder: (id: string) => void;
+  addAttachment: (workOrderId: string, attachment: Attachment) => void;
+  removeAttachment: (workOrderId: string, attachmentId: string) => void;
 
   updateFollowUp: (id: string, updates: Partial<FollowUp>) => void;
-  completeFollowUp: (id: string, satisfaction: number, comment: string, triggerRectification: boolean) => void;
+  completeFollowUp: (id: string, satisfaction: number, comment: string, triggerRectification: boolean, departmentId?: string) => void;
 
   addRectification: (r: Omit<Rectification, 'id' | 'timeline'>) => void;
   updateRectification: (id: string, updates: Partial<Rectification>) => void;
@@ -23,12 +49,12 @@ interface AppState {
   reviewRectification: (id: string, passed: boolean) => void;
 }
 
-const generateId = (prefix: string) => `${prefix}${Date.now().toString().slice(-6)}`;
+const generateId = (prefix: string) => `${prefix}${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
 export const useAppStore = create<AppState>((set, get) => ({
-  workOrders: initialWorkOrders,
-  followUps: initialFollowUps,
-  rectifications: initialRectifications,
+  workOrders: persisted?.workOrders ?? initialWorkOrders,
+  followUps: persisted?.followUps ?? initialFollowUps,
+  rectifications: persisted?.rectifications ?? initialRectifications,
 
   addWorkOrder: (order) => set((state) => {
     const newOrder: WorkOrder = {
@@ -37,6 +63,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       status: 'pending',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      attachments: [],
       logs: [{
         id: generateId('L'),
         action: '工单创建',
@@ -45,36 +72,48 @@ export const useAppStore = create<AppState>((set, get) => ({
         createdAt: new Date().toISOString(),
       }],
     } as WorkOrder;
-    return { workOrders: [newOrder, ...state.workOrders] };
+    const next = { ...state, workOrders: [newOrder, ...state.workOrders] };
+    saveToStorage(next);
+    return next;
   }),
 
-  updateWorkOrder: (id, updates) => set((state) => ({
-    workOrders: state.workOrders.map((w) =>
-      w.id === id ? { ...w, ...updates, updatedAt: new Date().toISOString() } : w
-    ),
-  })),
+  updateWorkOrder: (id, updates) => set((state) => {
+    const next = {
+      ...state,
+      workOrders: state.workOrders.map((w) =>
+        w.id === id ? { ...w, ...updates, updatedAt: new Date().toISOString() } : w
+      ),
+    };
+    saveToStorage(next);
+    return next;
+  }),
 
-  assignWorkOrder: (id, departmentId, assignee) => set((state) => ({
-    workOrders: state.workOrders.map((w) => {
-      if (w.id !== id) return w;
-      const dept = departments.find(d => d.id === departmentId);
-      return {
-        ...w,
-        departmentId,
-        departmentName: dept?.name,
-        assignee,
-        status: 'processing',
-        updatedAt: new Date().toISOString(),
-        logs: [...w.logs, {
-          id: generateId('L'),
-          action: '受理分派',
-          operator: '客服主管',
-          detail: `分派至${dept?.name} - ${assignee}处理`,
-          createdAt: new Date().toISOString(),
-        }],
-      };
-    }),
-  })),
+  assignWorkOrder: (id, departmentId, assignee) => set((state) => {
+    const next = {
+      ...state,
+      workOrders: state.workOrders.map((w) => {
+        if (w.id !== id) return w;
+        const dept = departments.find(d => d.id === departmentId);
+        return {
+          ...w,
+          departmentId,
+          departmentName: dept?.name,
+          assignee,
+          status: 'processing',
+          updatedAt: new Date().toISOString(),
+          logs: [...w.logs, {
+            id: generateId('L'),
+            action: '受理分派',
+            operator: '客服主管',
+            detail: `分派至${dept?.name} - ${assignee}处理`,
+            createdAt: new Date().toISOString(),
+          }],
+        } as WorkOrder;
+      }),
+    };
+    saveToStorage(next);
+    return next;
+  }),
 
   processWorkOrder: (id, reply) => set((state) => {
     const order = state.workOrders.find(w => w.id === id);
@@ -85,7 +124,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       relatedOrderIds: [],
       status: 'pending',
     };
-    return {
+    const hasFollowUp = state.followUps.some(f => f.workOrderId === id);
+    const next = {
       workOrders: state.workOrders.map((w) => {
         if (w.id !== id) return w;
         return {
@@ -97,41 +137,88 @@ export const useAppStore = create<AppState>((set, get) => ({
             id: generateId('L'),
             action: '处理完成',
             operator: w.assignee || '处理人',
-            detail: `答复内容：${reply.slice(0, 50)}...`,
+            detail: `答复内容：${reply.slice(0, 60)}${reply.length > 60 ? '...' : ''}`,
             createdAt: new Date().toISOString(),
           }],
-        };
+        } as WorkOrder;
       }),
-      followUps: order && !state.followUps.some(f => f.workOrderId === id)
-        ? [...state.followUps, newFollowUp]
-        : state.followUps,
+      followUps: hasFollowUp ? state.followUps : [...state.followUps, newFollowUp],
+      rectifications: state.rectifications,
     };
+    saveToStorage(next);
+    return next;
   }),
 
-  closeWorkOrder: (id) => set((state) => ({
-    workOrders: state.workOrders.map((w) => {
-      if (w.id !== id) return w;
-      return {
-        ...w,
-        status: 'closed',
-        closedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [...w.logs, {
-          id: generateId('L'),
-          action: '工单关闭',
-          operator: '系统',
-          detail: '工单已完成回访并关闭',
-          createdAt: new Date().toISOString(),
-        }],
-      };
-    }),
-  })),
+  closeWorkOrder: (id) => set((state) => {
+    const next = {
+      ...state,
+      workOrders: state.workOrders.map((w) => {
+        if (w.id !== id) return w;
+        return {
+          ...w,
+          status: 'closed',
+          closedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          logs: [...w.logs, {
+            id: generateId('L'),
+            action: '工单关闭',
+            operator: '系统',
+            detail: '工单已完成回访并关闭',
+            createdAt: new Date().toISOString(),
+          }],
+        } as WorkOrder;
+      }),
+    };
+    saveToStorage(next);
+    return next;
+  }),
 
-  updateFollowUp: (id, updates) => set((state) => ({
-    followUps: state.followUps.map(f => f.id === id ? { ...f, ...updates } : f),
-  })),
+  addAttachment: (workOrderId, attachment) => set((state) => {
+    const next = {
+      ...state,
+      workOrders: state.workOrders.map((w) => {
+        if (w.id !== workOrderId) return w;
+        return {
+          ...w,
+          attachments: [...w.attachments, attachment],
+          updatedAt: new Date().toISOString(),
+          logs: [...w.logs, {
+            id: generateId('L'),
+            action: '附件上传',
+            operator: '处理人',
+            detail: `上传附件：${attachment.fileName}`,
+            createdAt: new Date().toISOString(),
+          }],
+        } as WorkOrder;
+      }),
+    };
+    saveToStorage(next);
+    return next;
+  }),
 
-  completeFollowUp: (id, satisfaction, comment, triggerRectification) => set((state) => {
+  removeAttachment: (workOrderId, attachmentId) => set((state) => {
+    const next = {
+      ...state,
+      workOrders: state.workOrders.map((w) => {
+        if (w.id !== workOrderId) return w;
+        return {
+          ...w,
+          attachments: w.attachments.filter(a => a.id !== attachmentId),
+          updatedAt: new Date().toISOString(),
+        } as WorkOrder;
+      }),
+    };
+    saveToStorage(next);
+    return next;
+  }),
+
+  updateFollowUp: (id, updates) => set((state) => {
+    const next = { ...state, followUps: state.followUps.map(f => f.id === id ? { ...f, ...updates } : f) };
+    saveToStorage(next);
+    return next;
+  }),
+
+  completeFollowUp: (id, satisfaction, comment, triggerRectification, departmentId) => set((state) => {
     const followUp = state.followUps.find(f => f.id === id);
     if (!followUp) return state;
 
@@ -139,103 +226,129 @@ export const useAppStore = create<AppState>((set, get) => ({
     let newRectifications = state.rectifications;
 
     if (triggerRectification && order) {
-      const dept = departments.find(d => d.id === order.departmentId) || departments[0];
+      const resolvedDeptId = departmentId || order.departmentId || departments[0].id;
+      const dept = departments.find(d => d.id === resolvedDeptId) || departments[0];
       newRectifications = [{
         id: generateId('RT'),
         workOrderId: order.id,
-        title: `工单${order.id}整改任务 - ${order.title}`,
-        measure: '根据旅客投诉问题制定具体整改措施',
+        title: `工单${order.id}整改任务 - ${order.title.slice(0, 24)}`,
+        measure: '根据旅客投诉问题制定具体整改措施，请责任部门于期限内完成。',
         responsiblePerson: dept.name + '负责人',
         departmentId: dept.id,
         departmentName: dept.name,
-        status: 'rectifying',
+        status: 'rectifying' as const,
         deadline: new Date(Date.now() + 5 * 86400 * 1000).toISOString(),
         timeline: [
-          { time: new Date().toISOString(), event: '整改任务创建（旅客回访不满意触发）' },
+          { time: new Date().toISOString(), event: `整改任务创建（旅客回访不满意触发，责任部门：${dept.name}）` },
         ],
       }, ...state.rectifications];
     }
 
-    return {
-      followUps: state.followUps.map(f =>
-        f.id === id ? { ...f, satisfaction, comment, status: 'done', followUpAt: new Date().toISOString() } : f
-      ),
+    const closeOrder = !triggerRectification;
+    const next = {
       workOrders: state.workOrders.map(w => {
         if (w.id !== followUp.workOrderId) return w;
-        if (!triggerRectification) {
-          return {
-            ...w,
-            status: 'closed',
-            closedAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return w;
+        return closeOrder ? {
+          ...w,
+          status: 'closed',
+          closedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as WorkOrder : w;
       }),
+      followUps: state.followUps.map(f =>
+        f.id === id ? {
+          ...f,
+          satisfaction,
+          comment,
+          responsibleDepartmentId: triggerRectification ? (departmentId || order?.departmentId) : f.responsibleDepartmentId,
+          status: 'done' as const,
+          followUpAt: new Date().toISOString(),
+        } as FollowUp : f
+      ),
       rectifications: newRectifications,
     };
+    saveToStorage(next);
+    return next;
   }),
 
-  addRectification: (r) => set((state) => ({
-    rectifications: [{
-      ...r,
-      id: generateId('RT'),
-      timeline: [{ time: new Date().toISOString(), event: '整改任务创建' }],
-    }, ...state.rectifications],
-  })),
-
-  updateRectification: (id, updates) => set((state) => ({
-    rectifications: state.rectifications.map(r => r.id === id ? { ...r, ...updates } : r),
-  })),
-
-  completeRectification: (id) => set((state) => ({
-    rectifications: state.rectifications.map(r => {
-      if (r.id !== id) return r;
-      return {
+  addRectification: (r) => set((state) => {
+    const next = {
+      ...state,
+      rectifications: [{
         ...r,
-        status: 'reviewing',
-        completedAt: new Date().toISOString(),
-        timeline: [...r.timeline, { time: new Date().toISOString(), event: '整改完成，申请复核' }],
-      };
-    }),
-  })),
+        id: generateId('RT'),
+        timeline: [{ time: new Date().toISOString(), event: '整改任务创建' }],
+      } as Rectification, ...state.rectifications],
+    };
+    saveToStorage(next);
+    return next;
+  }),
+
+  updateRectification: (id, updates) => set((state) => {
+    const next = { ...state, rectifications: state.rectifications.map(r => r.id === id ? { ...r, ...updates } as Rectification : r) };
+    saveToStorage(next);
+    return next;
+  }),
+
+  completeRectification: (id) => set((state) => {
+    const next = {
+      ...state,
+      rectifications: state.rectifications.map(r => {
+        if (r.id !== id) return r;
+        return {
+          ...r,
+          status: 'reviewing' as const,
+          completedAt: new Date().toISOString(),
+          timeline: [...r.timeline, { time: new Date().toISOString(), event: '整改完成，申请复核' }],
+        } as Rectification;
+      }),
+    };
+    saveToStorage(next);
+    return next;
+  }),
 
   reviewRectification: (id, passed) => set((state) => {
     const rect = state.rectifications.find(r => r.id === id);
     if (!rect) return state;
 
     if (passed) {
-      return {
+      const next = {
         rectifications: state.rectifications.map(r => {
           if (r.id !== id) return r;
           return {
             ...r,
-            status: 'closed',
+            status: 'closed' as const,
             closedAt: new Date().toISOString(),
             timeline: [...r.timeline, { time: new Date().toISOString(), event: '复核通过，整改关闭' }],
-          };
+          } as Rectification;
         }),
         workOrders: state.workOrders.map(w => {
           if (w.id !== rect.workOrderId) return w;
           return {
             ...w,
-            status: 'closed',
+            status: 'closed' as const,
             closedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-          };
+          } as WorkOrder;
         }),
+        followUps: state.followUps,
       };
+      saveToStorage(next);
+      return next;
     }
-    return {
+    const next = {
+      ...state,
       rectifications: state.rectifications.map(r => {
         if (r.id !== id) return r;
         return {
           ...r,
-          status: 'rectifying',
+          status: 'rectifying' as const,
           timeline: [...r.timeline, { time: new Date().toISOString(), event: '复核未通过，重新整改' }],
-        };
+        } as Rectification;
       }),
     };
+    saveToStorage(next);
+    return next;
   }),
 }));
 

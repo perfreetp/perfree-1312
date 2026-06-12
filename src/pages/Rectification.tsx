@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import {
   Plus, ClipboardList, CheckCheck, CircleCheck, User, Calendar, Clock,
-  AlertTriangle, X, ChevronRight, AlertCircle, ListChecks
+  AlertTriangle, X, ChevronRight, AlertCircle, ListChecks, Paperclip
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { RectStatusBadge } from '@/components/common/Badges';
+import AttachmentList from '@/components/common/AttachmentList';
 import { departments, stations } from '@/data/mockBase';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { RectificationStatus } from '@/types';
@@ -210,6 +211,10 @@ export default function Rectification() {
                     <div className="text-xs text-[#92400E] mb-1">关联工单详情</div>
                     <div className="text-sm font-medium text-[#78350F]">{selectedOrder.title}</div>
                     <div className="text-xs text-[#92400E] mt-1">{selectedOrder.passengerName} · {selectedOrder.categoryName}</div>
+                    <div className="mt-3">
+                      <div className="text-xs text-[#92400E] mb-1.5 flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" />工单附件</div>
+                      <AttachmentList attachments={selectedOrder.attachments} />
+                    </div>
                   </div>
                 )}
 
