@@ -2,10 +2,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   FilePlus, Clock, AlertTriangle, CheckCircle,
   Phone, Globe, Smartphone, Building2, ClipboardCheck,
-  TrendingUp, TrendingDown, ArrowRight
+  TrendingUp, TrendingDown, ArrowRight, ThumbsDown, Users
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, Area } from 'recharts';
 import { useAppStore, useWorkOrderStats } from '@/stores/appStore';
+import { stations } from '@/data/mockBase';
 import { StatusBadge, UrgencyBadge, ChannelBadge } from '@/components/common/Badges';
 import CountdownTimer from '@/components/common/CountdownTimer';
 import { motion } from 'framer-motion';
@@ -16,6 +17,8 @@ export default function Overview() {
   const navigate = useNavigate();
   const stats = useWorkOrderStats();
   const workOrders = useAppStore(s => s.workOrders);
+  const followUps = useAppStore(s => s.followUps);
+  const rectifications = useAppStore(s => s.rectifications);
   const now = Date.now();
 
   const statusDist = [
@@ -50,6 +53,47 @@ export default function Overview() {
     .slice(0, 5);
 
   const recentOrders = workOrders.slice(0, 6);
+
+  const overdueOrders = workOrders.filter(
+    w => (w.status === 'pending' || w.status === 'processing') && new Date(w.deadline).getTime() < now
+  );
+
+  const lowScoreFollowUps = followUps.filter(
+    f => f.satisfaction !== undefined && f.satisfaction <= 2 && f.status === 'done'
+  ).filter(f => !rectifications.some(r => r.workOrderId === f.workOrderId && r.status === 'closed'));
+
+  const repeatComplaints = (() => {
+    const repeatFollowUps = followUps.filter(f => f.isRepeatComplaint);
+    const grouped: Record<string, { name: string; count: number }> = {};
+    repeatFollowUps.forEach(f => {
+      const wo = workOrders.find(w => w.id === f.workOrderId);
+      if (wo) {
+        if (!grouped[wo.passengerName]) {
+          grouped[wo.passengerName] = { name: wo.passengerName, count: 0 };
+        }
+        grouped[wo.passengerName].count++;
+      }
+    });
+    return Object.values(grouped);
+  })();
+
+  const stationHighFreq = (() => {
+    const grouped: Record<string, { stationId: string; stationName: string; count: number }> = {};
+    workOrders.forEach(w => {
+      if (w.stationId) {
+        if (!grouped[w.stationId]) {
+          const station = stations.find(s => s.id === w.stationId);
+          grouped[w.stationId] = {
+            stationId: w.stationId,
+            stationName: station?.name ?? w.stationId,
+            count: 0,
+          };
+        }
+        grouped[w.stationId].count++;
+      }
+    });
+    return Object.values(grouped).filter(s => s.count >= 3);
+  })();
 
   const statCards = [
     { label: '今日新增工单', value: stats.todayNew, icon: FilePlus, color: 'from-[#1B3A5C] to-[#2A5580]', trend: '+12%', trendUp: true, path: '/channel' },
@@ -203,8 +247,7 @@ export default function Overview() {
         </motion.div>
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
-        <motion.div
+      <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
@@ -252,6 +295,79 @@ export default function Overview() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.48 }}
+          className="card p-5"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle className="w-5 h-5 text-[#DC2626]" />
+            <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>风险预警</h3>
+          </div>
+          <div className="grid grid-cols-4 gap-4">
+            <div className="rounded-lg border border-[#FEE2E2] bg-[#FEF2F2]/50 p-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/processing')}>
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-[#DC2626]" />
+                <span className="text-sm font-medium text-[#1F2937]">超时未处理</span>
+              </div>
+              <div className="text-2xl font-bold text-[#DC2626]">{overdueOrders.length}</div>
+              {overdueOrders.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {overdueOrders.slice(0, 3).map(o => (
+                    <div key={o.id} className="text-xs text-[#64748B] hover:text-[#DC2626] truncate">{o.id}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-[#FED7AA] bg-[#FFF7ED]/50 p-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/followup')}>
+              <div className="flex items-center gap-2 mb-2">
+                <ThumbsDown className="w-4 h-4 text-[#F97316]" />
+                <span className="text-sm font-medium text-[#1F2937]">低分未整改</span>
+              </div>
+              <div className="text-2xl font-bold text-[#F97316]">{lowScoreFollowUps.length}</div>
+              {lowScoreFollowUps.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {lowScoreFollowUps.slice(0, 3).map(f => (
+                    <div key={f.id} className="text-xs text-[#64748B] hover:text-[#F97316] truncate">{f.workOrderId}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-[#E9D5FF] bg-[#F5F3FF]/50 p-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/followup')}>
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-4 h-4 text-[#7C3AED]" />
+                <span className="text-sm font-medium text-[#1F2937]">重复投诉</span>
+              </div>
+              <div className="text-2xl font-bold text-[#7C3AED]">{repeatComplaints.length}</div>
+              {repeatComplaints.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {repeatComplaints.slice(0, 3).map(r => (
+                    <div key={r.name} className="text-xs text-[#64748B] hover:text-[#7C3AED] truncate">{r.name} ({r.count}次)</div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-[#BFDBFE] bg-[#EFF6FF]/50 p-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/analysis')}>
+              <div className="flex items-center gap-2 mb-2">
+                <Building2 className="w-4 h-4 text-[#2563EB]" />
+                <span className="text-sm font-medium text-[#1F2937]">车站高频问题</span>
+              </div>
+              <div className="text-2xl font-bold text-[#2563EB]">{stationHighFreq.length}</div>
+              {stationHighFreq.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {stationHighFreq.slice(0, 3).map(s => (
+                    <div key={s.stationId} className="text-xs text-[#64748B] hover:text-[#2563EB] truncate">{s.stationName} ({s.count}件)</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.55 }}
           className="card"
         >
@@ -284,7 +400,6 @@ export default function Overview() {
             </table>
           </div>
         </motion.div>
-      </div>
     </div>
   );
 }

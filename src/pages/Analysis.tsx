@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   TrendingUp, TrendingDown, Award, AlertTriangle, BarChart2,
-  Calendar, Filter, Target, ClipboardCheck
+  Calendar, Filter, Target, ClipboardCheck, Zap, X,
+  ChevronDown, ListChecks, ArrowRight, FileText
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -10,67 +12,164 @@ import {
 } from 'recharts';
 import { useAppStore } from '@/stores/appStore';
 import { categories, departments, stations } from '@/data/mockBase';
-import { motion } from 'framer-motion';
+import { RectStatusBadge, StatusBadge } from '@/components/common/Badges';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const BAR_COLORS = ['#1B3A5C', '#2A5580', '#3B6FA4', '#E8A838', '#F2B84B', '#F8CC6D', '#6366F1', '#818CF8'];
+const PIE_COLORS = ['#22C55E', '#86EFAC', '#EAB308', '#F97316', '#DC2626'];
 
 export default function Analysis() {
+  const navigate = useNavigate();
   const workOrders = useAppStore(s => s.workOrders);
   const followUps = useAppStore(s => s.followUps);
   const rectifications = useAppStore(s => s.rectifications);
+  const addRectification = useAppStore(s => s.addRectification);
+
   const [dimension, setDimension] = useState<'category' | 'station' | 'department'>('category');
+  const [filterMonth, setFilterMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [filterChannel, setFilterChannel] = useState('');
+  const [filterStation, setFilterStation] = useState('');
+  const [filterDept, setFilterDept] = useState('');
+  const [showRectModal, setShowRectModal] = useState(false);
+  const [rectSource, setRectSource] = useState<{ workOrderId: string; title: string; deptId: string; deptName: string; measure: string } | null>(null);
+
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>();
+    workOrders.forEach(w => {
+      const d = new Date(w.createdAt);
+      set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    });
+    followUps.forEach(f => {
+      if (f.followUpAt) {
+        const d = new Date(f.followUpAt);
+        set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+      }
+    });
+    return Array.from(set).sort().reverse();
+  }, [workOrders, followUps]);
+
+  const filteredOrders = useMemo(() => {
+    const [fy, fm] = filterMonth.split('-').map(Number);
+    const start = new Date(fy, fm - 1, 1).getTime();
+    const end = new Date(fy, fm, 0, 23, 59, 59, 999).getTime();
+
+    return workOrders.filter(w => {
+      const t = new Date(w.createdAt).getTime();
+      if (t < start || t > end) return false;
+      if (filterChannel && w.channel !== filterChannel) return false;
+      if (filterStation && w.stationId !== filterStation) return false;
+      if (filterDept && w.departmentId !== filterDept) return false;
+      return true;
+    });
+  }, [workOrders, filterMonth, filterChannel, filterStation, filterDept]);
+
+  const filteredFollowUps = useMemo(() => {
+    const [fy, fm] = filterMonth.split('-').map(Number);
+    const start = new Date(fy, fm - 1, 1).getTime();
+    const end = new Date(fy, fm, 0, 23, 59, 59, 999).getTime();
+
+    return followUps.filter(f => {
+      if (!f.followUpAt) return false;
+      const t = new Date(f.followUpAt).getTime();
+      if (t < start || t > end) return false;
+      const order = workOrders.find(w => w.id === f.workOrderId);
+      if (!order) return false;
+      if (filterChannel && order.channel !== filterChannel) return false;
+      if (filterStation && order.stationId !== filterStation) return false;
+      if (filterDept && order.departmentId !== filterDept) return false;
+      return true;
+    });
+  }, [followUps, workOrders, filterMonth, filterChannel, filterStation, filterDept]);
+
+  const filteredRects = useMemo(() => {
+    const orderIds = new Set(filteredOrders.map(o => o.id));
+    return rectifications.filter(r => orderIds.has(r.workOrderId));
+  }, [rectifications, filteredOrders]);
+
+  const metrics = useMemo(() => {
+    const orderCount = filteredOrders.length;
+    const closedCount = filteredOrders.filter(w => w.status === 'closed').length;
+
+    const doneFU = filteredFollowUps.filter(f => f.status === 'done');
+    const totalSat = doneFU.reduce((s, f) => s + (f.satisfaction || 0), 0);
+    const satisfaction = doneFU.length > 0 ? Math.round((totalSat / (doneFU.length * 5)) * 100) : 0;
+
+    const closedRects = filteredRects.filter(r => r.status === 'closed').length;
+    const allRects = filteredRects.length;
+    const rectRate = allRects > 0 ? Math.round((closedRects / allRects) * 100) : 0;
+
+    const lowScoreFU = doneFU.filter(f => (f.satisfaction || 0) <= 2);
+    const repeatComplaints = filteredFollowUps.filter(f => f.isRepeatComplaint).length;
+    const repeatRate = filteredFollowUps.length > 0 ? Math.round((repeatComplaints / filteredFollowUps.length) * 1000) / 10 : 0;
+
+    return { orderCount, closedCount, satisfaction, rectRate, lowScoreCount: lowScoreFU.length, repeatRate, allRects, closedRects };
+  }, [filteredOrders, filteredFollowUps, filteredRects]);
 
   const hotTopics = useMemo(() => {
-    const map = new Map<string, number>();
-    workOrders.forEach(w => {
+    const map = new Map<string, { count: number; deptIds: Set<string>; orderIds: string[] }>();
+    filteredOrders.forEach(w => {
       const cat = categories.find(c => c.id === w.categoryId);
       const parent = cat?.parentId ? categories.find(c => c.id === cat.parentId) : cat;
       const name = parent?.name || w.categoryName || '其他';
-      map.set(name, (map.get(name) || 0) + 1);
+      const existing = map.get(name);
+      if (existing) {
+        existing.count++;
+        if (w.departmentId) existing.deptIds.add(w.departmentId);
+        existing.orderIds.push(w.id);
+      } else {
+        map.set(name, { count: 1, deptIds: new Set(w.departmentId ? [w.departmentId] : []), orderIds: [w.id] });
+      }
     });
     return Array.from(map.entries())
-      .map(([name, value]) => ({ name, value }))
+      .map(([name, data]) => ({ name, value: data.count, deptIds: Array.from(data.deptIds), orderIds: data.orderIds }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [workOrders]);
+  }, [filteredOrders]);
+
+  const lowScoreFollowUps = useMemo(() => {
+    return filteredFollowUps
+      .filter(f => f.status === 'done' && (f.satisfaction || 0) <= 2)
+      .map(f => {
+        const order = workOrders.find(w => w.id === f.workOrderId);
+        const rects = rectifications.filter(r => r.workOrderId === f.workOrderId);
+        return { ...f, order, rects };
+      });
+  }, [filteredFollowUps, workOrders, rectifications]);
 
   const dimensionData = useMemo(() => {
-    const lowUrgency = ['low'];
-    const highUrgency = ['high', 'urgent'];
-    const midUrgency = ['medium'];
-    const isUrgency = (u: string, arr: string[]) => arr.includes(u);
-
     if (dimension === 'category') {
       return categories.filter(c => c.level === 1).map(parent => {
-        const children = categories.filter(c => c.parentId === parent.id);
-        const matched = workOrders.filter(w => {
+        const matched = filteredOrders.filter(w => {
           const cat = categories.find(c => c.id === w.categoryId);
           if (!cat) return false;
           return cat.parentId === parent.id || cat.id === parent.id;
         });
         return {
           name: parent.name,
-          咨询: matched.filter(w => isUrgency(w.urgency, lowUrgency)).length,
-          投诉: matched.filter(w => isUrgency(w.urgency, highUrgency)).length,
-          建议: matched.filter(w => isUrgency(w.urgency, midUrgency)).length,
+          咨询: matched.filter(w => w.urgency === 'low').length,
+          投诉: matched.filter(w => w.urgency === 'urgent' || w.urgency === 'high').length,
+          建议: matched.filter(w => w.urgency === 'medium').length,
         };
       }).filter(d => (d.咨询 + d.投诉 + d.建议) > 0);
     }
     if (dimension === 'station') {
       return stations.map(s => ({
         name: s.name.slice(0, 5),
-        咨询: workOrders.filter(w => w.stationId === s.id && isUrgency(w.urgency, lowUrgency)).length,
-        投诉: workOrders.filter(w => w.stationId === s.id && isUrgency(w.urgency, highUrgency)).length,
-        建议: workOrders.filter(w => w.stationId === s.id && isUrgency(w.urgency, midUrgency)).length,
+        咨询: filteredOrders.filter(w => w.stationId === s.id && w.urgency === 'low').length,
+        投诉: filteredOrders.filter(w => w.stationId === s.id && (w.urgency === 'urgent' || w.urgency === 'high')).length,
+        建议: filteredOrders.filter(w => w.stationId === s.id && w.urgency === 'medium').length,
       })).filter(d => (d.咨询 + d.投诉 + d.建议) > 0);
     }
     return departments.map(d => ({
       name: d.name,
-      咨询: workOrders.filter(w => w.departmentId === d.id && isUrgency(w.urgency, lowUrgency)).length,
-      投诉: workOrders.filter(w => w.departmentId === d.id && isUrgency(w.urgency, highUrgency)).length,
-      建议: workOrders.filter(w => w.departmentId === d.id && isUrgency(w.urgency, midUrgency)).length,
-    }));
-  }, [dimension, workOrders]);
+      咨询: filteredOrders.filter(w => w.departmentId === d.id && w.urgency === 'low').length,
+      投诉: filteredOrders.filter(w => w.departmentId === d.id && (w.urgency === 'urgent' || w.urgency === 'high')).length,
+      建议: filteredOrders.filter(w => w.departmentId === d.id && w.urgency === 'medium').length,
+    })).filter(d => (d.咨询 + d.投诉 + d.建议) > 0);
+  }, [dimension, filteredOrders]);
 
   const monthlyData = useMemo(() => {
     return Array.from({ length: 6 }, (_, i) => {
@@ -99,125 +198,150 @@ export default function Analysis() {
         return new Date(t).getTime() >= startOfMonth && new Date(t).getTime() <= endOfMonth;
       });
 
-      const totalSat = monthFollowUps.reduce((s, f) => s + (f.satisfaction || 0), 0);
-      const satisfaction = monthFollowUps.length > 0 ? Math.round((totalSat / (monthFollowUps.length * 5)) * 100) : 85;
+      const doneFU = monthFollowUps.filter(f => f.status === 'done');
+      const totalSat = doneFU.reduce((s, f) => s + (f.satisfaction || 0), 0);
+      const satisfaction = doneFU.length > 0 ? Math.round((totalSat / (doneFU.length * 5)) * 100) : 0;
       const closedRects = monthRects.filter(r => r.status === 'closed').length;
-      const allRects = monthRects.length || 1;
-      const rectRate = Math.round((closedRects / allRects) * 100);
+      const rectRate = monthRects.length > 0 ? Math.round((closedRects / monthRects.length) * 100) : 0;
 
       return {
         month: label,
-        工单量: monthOrders.length || 8,
+        工单量: monthOrders.length,
         满意度: satisfaction,
-        整改完成率: rectRate || 85,
+        整改完成率: rectRate,
       };
     });
   }, [workOrders, followUps, rectifications]);
 
   const radarData = useMemo(() => {
-    return departments.slice(0, 5).map(d => {
-      const dOrders = workOrders.filter(w => w.departmentId === d.id);
-      const dRects = rectifications.filter(r => r.departmentId === d.id);
-      const dFollowUps = followUps.filter(f => {
+    return departments.map(d => {
+      const dOrders = filteredOrders.filter(w => w.departmentId === d.id);
+      const dRects = filteredRects.filter(r => r.departmentId === d.id);
+      const dFU = filteredFollowUps.filter(f => {
         const o = workOrders.find(w => w.id === f.workOrderId);
         return o?.departmentId === d.id;
       });
 
-      const avgSat = dFollowUps.length > 0
-        ? Math.round((dFollowUps.reduce((s, f) => s + (f.satisfaction || 0), 0) / (dFollowUps.length * 5)) * 100)
-        : 85;
+      const doneFU = dFU.filter(f => f.status === 'done');
+      const avgSat = doneFU.length > 0
+        ? Math.round((doneFU.reduce((s, f) => s + (f.satisfaction || 0), 0) / (doneFU.length * 5)) * 100)
+        : 0;
 
       const closedRect = dRects.filter(r => r.status === 'closed').length;
-      const rectRate = dRects.length > 0 ? Math.round((closedRect / dRects.length) * 100) : 88;
+      const rectRate = dRects.length > 0 ? Math.round((closedRect / dRects.length) * 100) : 0;
 
-      const response = dOrders.length > 0 ? 75 + Math.min(25, Math.round(dOrders.length * 3)) : 85;
+      const responseRate = dOrders.length > 0
+        ? Math.min(100, Math.round((dOrders.filter(w => w.status !== 'pending').length / dOrders.length) * 100))
+        : 0;
+
+      const standardRate = dRects.length > 0
+        ? Math.min(100, Math.round((dRects.filter(r => r.status === 'closed').length / dRects.length) * 100))
+        : 0;
 
       return {
         subject: d.name,
-        响应时效: Math.min(100, response),
+        响应时效: responseRate,
         满意度: avgSat,
         整改完成: rectRate,
-        服务规范: 85 + Math.floor(Math.min(15, dOrders.length)),
+        服务规范: standardRate,
       };
     });
-  }, [workOrders, rectifications, followUps]);
+  }, [filteredOrders, filteredRects, filteredFollowUps, workOrders]);
 
   const pieData = useMemo(() => {
     const ratings = [0, 0, 0, 0, 0];
-    followUps.forEach(f => {
+    filteredFollowUps.filter(f => f.status === 'done').forEach(f => {
       if (f.satisfaction && f.satisfaction >= 1 && f.satisfaction <= 5) {
         ratings[f.satisfaction - 1] += 1;
       }
     });
-    const result = [
-      { name: '非常满意', value: ratings[4] + 4 },
-      { name: '满意', value: ratings[3] + 6 },
-      { name: '一般', value: ratings[2] + 2 },
-      { name: '不满意', value: ratings[1] + 1 },
-      { name: '非常不满意', value: ratings[0] },
-    ];
-    return result;
-  }, [followUps]);
-  const pieColors = ['#22C55E', '#86EFAC', '#EAB308', '#F97316', '#DC2626'];
-
-  const metrics = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
-    const prevMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1).getTime();
-    const prevMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59).getTime();
-
-    const monthOrders = workOrders.filter(w => new Date(w.createdAt).getTime() >= startOfMonth).length;
-    const prevMonthOrders = workOrders.filter(w => {
-      const t = new Date(w.createdAt).getTime();
-      return t >= prevMonthStart && t <= prevMonthEnd;
-    }).length;
-
-    const monthFU = followUps.filter(f => f.followUpAt && new Date(f.followUpAt).getTime() >= startOfMonth);
-    const prevFU = followUps.filter(f => {
-      if (!f.followUpAt) return false;
-      const t = new Date(f.followUpAt).getTime();
-      return t >= prevMonthStart && t <= prevMonthEnd;
-    });
-
-    const avgSat = (arr: typeof followUps) => {
-      if (!arr.length) return 85;
-      return Math.round((arr.reduce((s, f) => s + (f.satisfaction || 0), 0) / (arr.length * 5)) * 100);
-    };
-
-    const monthRepeat = monthFU.filter(f => f.isRepeatComplaint).length;
-    const monthRepeatRate = monthFU.length ? Math.round(monthRepeat / monthFU.length * 1000) / 10 : 5;
-    const prevRepeat = prevFU.filter(f => f.isRepeatComplaint).length;
-    const prevRepeatRate = prevFU.length ? Math.round(prevRepeat / prevFU.length * 1000) / 10 : 6;
-
-    const orderDiff = prevMonthOrders ? Math.round((monthOrders - prevMonthOrders) / prevMonthOrders * 100) : 0;
-    const satDiff = avgSat(monthFU) - avgSat(prevFU);
-    const repeatDiff = Math.round((monthRepeatRate - prevRepeatRate) * 10) / 10;
-
-    // 平均响应时效（基于紧急度处理速度模拟）
-    const avgResponse = '3.2小时';
-
     return [
-      { label: '本月工单总量', value: monthOrders + 50, trend: `${orderDiff >= 0 ? '+' : ''}${orderDiff}%`, up: orderDiff >= 0, icon: BarChart2, color: '#1B3A5C' },
-      { label: '平均满意度', value: `${avgSat(monthFU)}%`, trend: `${satDiff >= 0 ? '+' : ''}${satDiff}%`, up: satDiff >= 0, icon: Award, color: '#E8A838' },
-      { label: '重复投诉率', value: `${monthRepeatRate}%`, trend: `${repeatDiff <= 0 ? '' : '+'}${repeatDiff}%`, up: repeatDiff <= 0, icon: AlertTriangle, color: '#DC2626' },
-      { label: '平均响应时效', value: avgResponse, trend: '-0.5h', up: true, icon: Target, color: '#6366F1' },
-    ];
-  }, [workOrders, followUps]);
+      { name: '非常满意', value: ratings[4] },
+      { name: '满意', value: ratings[3] },
+      { name: '一般', value: ratings[2] },
+      { name: '不满意', value: ratings[1] },
+      { name: '非常不满意', value: ratings[0] },
+    ].filter(d => d.value > 0);
+  }, [filteredFollowUps]);
+
+  const openRectPlan = useCallback((source: { workOrderId: string; title: string; deptId: string; deptName: string; measure: string }) => {
+    setRectSource(source);
+    setShowRectModal(true);
+  }, []);
+
+  const handleCreateRect = () => {
+    if (!rectSource) return;
+    addRectification({
+      workOrderId: rectSource.workOrderId,
+      title: `整改计划 - ${rectSource.title.slice(0, 30)}`,
+      measure: rectSource.measure,
+      responsiblePerson: rectSource.deptName + '负责人',
+      departmentId: rectSource.deptId,
+      departmentName: rectSource.deptName,
+      status: 'rectifying',
+      deadline: new Date(Date.now() + 5 * 86400 * 1000).toISOString(),
+    });
+    setShowRectModal(false);
+    setRectSource(null);
+  };
+
+  const getRectForOrder = (orderId: string) => rectifications.filter(r => r.workOrderId === orderId);
+
+  const clearFilters = () => {
+    setFilterChannel('');
+    setFilterStation('');
+    setFilterDept('');
+  };
+
+  const channelLabel = (c: string) => c === 'hotline' ? '12306热线' : c === 'web' ? '官方网站' : c === 'app' ? '手机APP' : '车站现场';
 
   return (
     <div className="space-y-5">
+      <div className="card p-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[#1F2937]">
+            <Filter className="w-4 h-4 text-[#1B3A5C]" />月度报告筛选
+          </div>
+          <select className="input-field w-40 text-sm" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}>
+            {monthOptions.length === 0 && <option value={filterMonth}>{filterMonth}</option>}
+            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select className="input-field w-32 text-sm" value={filterChannel} onChange={e => setFilterChannel(e.target.value)}>
+            <option value="">全部渠道</option>
+            <option value="hotline">12306热线</option>
+            <option value="web">官方网站</option>
+            <option value="app">手机APP</option>
+            <option value="station">车站现场</option>
+          </select>
+          <select className="input-field w-32 text-sm" value={filterStation} onChange={e => setFilterStation(e.target.value)}>
+            <option value="">全部车站</option>
+            {stations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="input-field w-32 text-sm" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
+            <option value="">全部部门</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          {(filterChannel || filterStation || filterDept) && (
+            <button onClick={clearFilters} className="text-xs text-[#DC2626] hover:underline flex items-center gap-1">
+              <X className="w-3 h-3" />清除筛选
+            </button>
+          )}
+          <div className="ml-auto text-xs text-[#94A3B8]">
+            筛选结果：{filteredOrders.length} 条工单 / {filteredFollowUps.filter(f => f.status === 'done').length} 条回访 / {filteredRects.length} 条整改
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-4 gap-5">
-        {metrics.map((m, i) => {
+        {[
+          { label: '工单总量', value: metrics.orderCount, sub: `已关闭 ${metrics.closedCount}`, icon: BarChart2, color: '#1B3A5C' },
+          { label: '回访满意度', value: metrics.satisfaction > 0 ? `${metrics.satisfaction}%` : '-', sub: `${metrics.lowScoreCount} 条低分`, icon: Award, color: '#E8A838' },
+          { label: '整改完成率', value: metrics.allRects > 0 ? `${metrics.rectRate}%` : '-', sub: `${metrics.closedRects}/${metrics.allRects} 已完成`, icon: ClipboardCheck, color: '#22C55E' },
+          { label: '重复投诉率', value: `${metrics.repeatRate}%`, sub: `${filteredFollowUps.filter(f => f.isRepeatComplaint).length} 条重复`, icon: AlertTriangle, color: '#DC2626' },
+        ].map((m, i) => {
           const Icon = m.icon;
           return (
-            <motion.div
-              key={m.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.08 }}
-              className="card p-5"
-            >
+            <motion.div key={m.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }} className="card p-5">
               <div className="flex items-start justify-between">
                 <div>
                   <div className="text-sm text-[#64748B]">{m.label}</div>
@@ -227,100 +351,166 @@ export default function Analysis() {
                   <Icon className="w-5 h-5" style={{ color: m.color }} />
                 </div>
               </div>
-              <div className="mt-3 flex items-center gap-1 text-xs">
-                {m.up ? <TrendingUp className="w-3.5 h-3.5 text-[#16A34A]" /> : <TrendingDown className="w-3.5 h-3.5 text-[#DC2626]" />}
-                <span className={m.up ? 'text-[#16A34A] font-medium' : 'text-[#DC2626] font-medium'}>{m.trend}</span>
-                <span className="text-[#94A3B8] ml-1">较上月</span>
-              </div>
+              <div className="mt-3 text-xs text-[#94A3B8]">{m.sub}</div>
             </motion.div>
           );
         })}
       </div>
 
       <div className="grid grid-cols-3 gap-5">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="card p-5 col-span-2"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="card p-5 col-span-2">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>热点问题排行 Top 10</h3>
-            <span className="text-xs text-[#64748B] flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />本月</span>
+            <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>热点问题排行</h3>
+            <span className="text-xs text-[#64748B] flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{filterMonth}</span>
           </div>
-          <div className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hotTopics} layout="vertical" margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#374151', fontSize: 12 }}
-                  width={80}
-                />
-                <Tooltip />
-                <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={20}>
-                  {hotTopics.map((_, i) => (
-                    <Cell key={i} fill={i < 3 ? '#E8A838' : BAR_COLORS[i % BAR_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-3 flex gap-4">
-            {[1, 2, 3].map(n => (
-              <div key={n} className="flex items-center gap-2 text-xs">
-                <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#E8A838] to-[#F2B84B] text-white text-[10px] font-bold flex items-center justify-center shadow-sm">
-                  {n}
-                </span>
-                <span className="text-[#64748B]">Top{n}热点：</span>
-                <span className="font-medium text-[#1F2937]">{hotTopics[n - 1]?.name || '-'}</span>
+          {hotTopics.length === 0 ? (
+            <div className="h-[320px] flex items-center justify-center text-sm text-[#94A3B8]">当前筛选无数据</div>
+          ) : (
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hotTopics} layout="vertical" margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#374151', fontSize: 12 }} width={80} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={20}>
+                    {hotTopics.map((_, i) => (
+                      <Cell key={i} fill={i < 3 ? '#E8A838' : BAR_COLORS[i % BAR_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap gap-3">
+            {hotTopics.slice(0, 3).map((topic, n) => (
+              <div key={topic.name} className="flex items-center gap-2 text-xs">
+                <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#E8A838] to-[#F2B84B] text-white text-[10px] font-bold flex items-center justify-center shadow-sm">{n + 1}</span>
+                <span className="text-[#64748B]">{topic.name}</span>
+                <span className="font-semibold text-[#1F2937]">{topic.value}条</span>
+                {topic.deptIds.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const deptId = topic.deptIds[0];
+                      const dept = departments.find(d => d.id === deptId);
+                      openRectPlan({
+                        workOrderId: topic.orderIds[0],
+                        title: topic.name,
+                        deptId,
+                        deptName: dept?.name || '',
+                        measure: `针对"${topic.name}"高频问题制定整改措施：\n1. 分析问题根因并制定改进方案\n2. 组织相关部门专项排查\n3. 建立长效预防机制`,
+                      });
+                    }}
+                    className="px-2 py-0.5 rounded bg-[#1B3A5C] text-white hover:bg-[#152E48] flex items-center gap-1"
+                  >
+                    <Zap className="w-3 h-3" />一键整改
+                  </button>
+                )}
               </div>
             ))}
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="card p-5"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="card p-5">
           <h3 className="text-base font-semibold text-[#1F2937] mb-4" style={{ fontFamily: "'Noto Serif SC', serif" }}>满意度分布</h3>
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={85} paddingAngle={2} dataKey="value">
-                  {pieData.map((_, i) => <Cell key={i} fill={pieColors[i]} stroke="white" strokeWidth={2} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="space-y-1.5 mt-2">
-            {pieData.map((p, i) => (
-              <div key={p.name} className="flex items-center gap-2 text-xs">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: pieColors[i] }} />
-                <span className="text-[#64748B] w-16">{p.name}</span>
-                <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${p.value / Math.max(1, ...pieData.map(d => d.value)) * 100}%`, background: pieColors[i] }} />
-                </div>
-                <span className="font-semibold text-[#1F2937] w-6 text-right">{p.value}</span>
+          {pieData.length === 0 ? (
+            <div className="h-[260px] flex items-center justify-center text-sm text-[#94A3B8]">暂无回访数据</div>
+          ) : (
+            <>
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={85} paddingAngle={2} dataKey="value">
+                      {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[PIE_COLORS.length - 1 - i] || PIE_COLORS[0]} stroke="white" strokeWidth={2} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
+              <div className="space-y-1.5 mt-2">
+                {pieData.map((p, i) => (
+                  <div key={p.name} className="flex items-center gap-2 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: PIE_COLORS[PIE_COLORS.length - 1 - i] || PIE_COLORS[0] }} />
+                    <span className="text-[#64748B] w-16">{p.name}</span>
+                    <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${Math.max(p.value / Math.max(1, ...pieData.map(d => d.value)) * 100, 5)}%`, background: PIE_COLORS[PIE_COLORS.length - 1 - i] || PIE_COLORS[0] }} />
+                    </div>
+                    <span className="font-semibold text-[#1F2937] w-6 text-right">{p.value}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </motion.div>
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.45 }}
-        className="card p-5"
-      >
+      {lowScoreFollowUps.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="card">
+          <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+            <h3 className="text-base font-semibold text-[#DC2626] flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+              <AlertTriangle className="w-4 h-4" />低分回访待整改 ({lowScoreFollowUps.length})
+            </h3>
+          </div>
+          <div className="divide-y divide-[#F1F5F9]">
+            {lowScoreFollowUps.map(fu => {
+              const order = fu.order;
+              const rects = fu.rects;
+              const hasRect = rects.length > 0;
+              return (
+                <div key={fu.id} className="px-5 py-3.5 flex items-center gap-4 hover:bg-[#FEF2F2]/30 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-[#1F2937] text-sm truncate">{order?.title || fu.workOrderId}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-[#FEE2E2] text-[#991B1B] text-xs font-medium">{fu.satisfaction}星</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-3 text-xs text-[#64748B]">
+                      <span>{fu.workOrderId}</span>
+                      {order && <span>{order.categoryName}</span>}
+                      {order?.departmentName && <span>{order.departmentName}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {hasRect ? (
+                      <div className="flex items-center gap-2">
+                        {rects.map(r => (
+                          <span key={r.id} className="flex items-center gap-1 text-xs">
+                            <RectStatusBadge status={r.status} />
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          const deptId = fu.responsibleDepartmentId || order?.departmentId || departments[0].id;
+                          const dept = departments.find(d => d.id === deptId);
+                          openRectPlan({
+                            workOrderId: fu.workOrderId,
+                            title: order?.title || fu.workOrderId,
+                            deptId,
+                            deptName: dept?.name || '',
+                            measure: `针对旅客低分回访（${fu.satisfaction}星）制定整改措施：\n1. 分析旅客不满原因\n2. 制定针对性改进方案\n3. 跟踪落实并再次回访确认`,
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[#DC2626] text-white text-xs hover:bg-[#B91C1C] flex items-center gap-1"
+                      >
+                        <Zap className="w-3 h-3" />一键整改
+                      </button>
+                    )}
+                    <button
+                      onClick={() => navigate('/processing')}
+                      className="text-xs text-[#1B3A5C] hover:underline flex items-center gap-1"
+                    >
+                      查看工单 <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="card p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>近6个月质量趋势</h3>
           <div className="flex items-center gap-3 text-xs">
@@ -340,8 +530,8 @@ export default function Analysis() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} />
-              <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} />
-              <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} domain={[50, 100]} />
+              <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} allowDecimals={false} />
+              <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} domain={[0, 100]} />
               <Tooltip />
               <Area yAxisId="left" type="monotone" dataKey="工单量" stroke="#1B3A5C" strokeWidth={2.5} fill="url(#mg1)" dot={{ r: 4, fill: '#1B3A5C' }} />
               <Line yAxisId="right" type="monotone" dataKey="满意度" stroke="#E8A838" strokeWidth={3} dot={{ r: 4, fill: '#E8A838' }} />
@@ -352,12 +542,7 @@ export default function Analysis() {
       </motion.div>
 
       <div className="grid grid-cols-3 gap-5">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="card p-5 col-span-2"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="card p-5 col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>工单分布统计</h3>
             <div className="flex items-center gap-2 p-1 bg-[#F0F4F8] rounded-lg">
@@ -375,28 +560,27 @@ export default function Analysis() {
               ))}
             </div>
           </div>
-          <div className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dimensionData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} allowDecimals={false} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="咨询" fill="#1B3A5C" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="投诉" fill="#DC2626" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="建议" fill="#E8A838" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {dimensionData.length === 0 ? (
+            <div className="h-[300px] flex items-center justify-center text-sm text-[#94A3B8]">当前筛选无数据</div>
+          ) : (
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dimensionData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="咨询" fill="#1B3A5C" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="投诉" fill="#DC2626" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="建议" fill="#E8A838" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.55 }}
-          className="card p-5"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }} className="card p-5">
           <h3 className="text-base font-semibold text-[#1F2937] mb-4" style={{ fontFamily: "'Noto Serif SC', serif" }}>部门绩效对比</h3>
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -412,6 +596,116 @@ export default function Analysis() {
           </div>
         </motion.div>
       </div>
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }} className="card">
+        <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+          <h3 className="text-base font-semibold text-[#1F2937]" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+            <FileText className="w-4 h-4 inline mr-2" />月度报告明细
+          </h3>
+          <span className="text-xs text-[#94A3B8]">{filterMonth} · {filteredOrders.length} 条工单</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className="table-header">工单号</th>
+                <th className="table-header">标题</th>
+                <th className="table-header">渠道</th>
+                <th className="table-header">紧急度</th>
+                <th className="table-header">状态</th>
+                <th className="table-header">责任部门</th>
+                <th className="table-header">回访评分</th>
+                <th className="table-header">整改进展</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredOrders.length === 0 && (
+                <tr><td colSpan={8} className="py-10 text-center text-sm text-[#94A3B8]">当前筛选无数据</td></tr>
+              )}
+              {filteredOrders.slice(0, 20).map(o => {
+                const fu = followUps.find(f => f.workOrderId === o.id && f.status === 'done');
+                const rects = getRectForOrder(o.id);
+                return (
+                  <tr key={o.id} className="hover:bg-[#F7FAFC] cursor-pointer" onClick={() => navigate('/processing')}>
+                    <td className="table-cell font-mono text-xs text-[#64748B]">{o.id}</td>
+                    <td className="table-cell max-w-[200px] truncate">{o.title}</td>
+                    <td className="table-cell text-xs">{channelLabel(o.channel)}</td>
+                    <td className="table-cell"><UrgencyBadge urgency={o.urgency} /></td>
+                    <td className="table-cell"><StatusBadge status={o.status} /></td>
+                    <td className="table-cell text-xs">{o.departmentName || '-'}</td>
+                    <td className="table-cell text-xs">{fu ? `${fu.satisfaction}星` : '-'}</td>
+                    <td className="table-cell">
+                      {rects.length === 0 ? (
+                        <span className="text-xs text-[#94A3B8]">-</span>
+                      ) : rects.map(r => (
+                        <span key={r.id} className="mr-1"><RectStatusBadge status={r.status} /></span>
+                      ))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
+
+      <AnimatePresence>
+        {showRectModal && rectSource && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-6"
+            onClick={() => { setShowRectModal(false); setRectSource(null); }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="card p-6 w-full max-w-lg"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+                <Zap className="w-5 h-5 text-[#E8A838]" />一键生成整改计划
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs text-[#64748B]">来源工单</div>
+                  <div className="font-medium text-[#1F2937]">{rectSource.workOrderId} - {rectSource.title}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#64748B]">责任部门</div>
+                  <div className="font-medium text-[#1F2937]">{rectSource.deptName}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#64748B]">完成期限</div>
+                  <div className="font-medium text-[#1F2937]">{new Date(Date.now() + 5 * 86400 * 1000).toLocaleDateString('zh-CN')}（默认5天）</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#64748B] mb-1">整改措施</div>
+                  <div className="p-3 bg-[#F7FAFC] rounded-lg text-sm text-[#1F2937] whitespace-pre-wrap border border-[#E2E8F0]">{rectSource.measure}</div>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-5">
+                <button className="btn-secondary" onClick={() => { setShowRectModal(false); setRectSource(null); }}>取消</button>
+                <button className="btn-primary flex items-center gap-1" onClick={handleCreateRect}>
+                  <ListChecks className="w-4 h-4" />确认创建
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
+}
+
+function UrgencyBadge({ urgency }: { urgency: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    urgent: { label: '紧急', cls: 'bg-[#FEE2E2] text-[#991B1B]' },
+    high: { label: '高', cls: 'bg-[#FFFBEB] text-[#92400E]' },
+    medium: { label: '中', cls: 'bg-[#DBEAFE] text-[#1E40AF]' },
+    low: { label: '低', cls: 'bg-[#F0FDF4] text-[#166534]' },
+  };
+  const info = map[urgency] || map.low;
+  return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${info.cls}`}>{info.label}</span>;
 }
